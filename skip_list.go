@@ -26,18 +26,26 @@ type SkipList struct {
 }
 
 func logOnLevel(node *Node, level int) {
+	sentinel := node
 	log.Println("Level " + strconv.Itoa(level))
 	for node != nil && len(node.NextOnLevel) != 0 {
-		if node.Val != -1 {
+		if node != sentinel {
 			log.Printf("%d\n", node.Val)
 		}
 		node = node.NextOnLevel[level]
 	}
 }
 
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
 func makeSkipList(list []int, p float32, maxLevel int) *SkipList {
 	var curr *Node
-	dummy := &Node{Val: -1, NextOnLevel: make(map[int]*Node)}
+	dummy := &Node{Val: -10000, NextOnLevel: make(map[int]*Node)}
 	prev := dummy
 
 	// Construct a linked list first
@@ -52,27 +60,28 @@ func makeSkipList(list []int, p float32, maxLevel int) *SkipList {
 	for level := 1; level < maxLevel; level++ {
 		prev = dummy
 		curr = dummy.NextOnLevel[level - 1]
-		
-		first := true
 
+		// Do we want to enforce setting some number on the level?
 		for curr != nil {
-			if rand.Float32() <= p || first {
+			if rand.Float32() <= p {
 				prev.NextOnLevel[level] = curr
 				curr.PrevOnLevel[level] = prev
 				prev = curr
-				first = false
 			}
 			curr = curr.NextOnLevel[level - 1]
 		}
 	}
 
-	logOnLevel(dummy, 0)
-	logOnLevel(dummy, 1)
-	logOnLevel(dummy, 2)
-	logOnLevel(dummy, 3)
-	log.Println()
-
 	return &SkipList{Sentinel: dummy, MaxLevel: maxLevel, P: p}
+}
+
+
+func (sl *SkipList) print() {
+	log.Println()
+	for level := sl.MaxLevel - 1; level >= 0; level-- {
+		logOnLevel(sl.Sentinel, level)
+	}
+	log.Println()
 }
 
 
@@ -80,19 +89,30 @@ func (sl *SkipList) search(target int) (*Node, error) {
 	level := sl.MaxLevel - 1
 	curr := sl.Sentinel.NextOnLevel[level]
 	
-	start := curr
+	start := sl.Sentinel.NextOnLevel[0]
 	var end *Node
 
+	// If level is empty, we go down until we find non-empty level
+	for curr == nil && level >= 0 {
+		curr = sl.Sentinel.NextOnLevel[level]
+		level--
+	}
+
 	for start != end && level >= 0 {
-		log.Printf("Level: %d, Value: %d\n", level, curr.Val)
+		// log.Printf("Level: %d, Value: %d\n", level, curr.Val)
 		if curr.Val > target {
 			end = curr
 			
-			if level > 0{
+			if curr.PrevOnLevel[level] == sl.Sentinel {
+				level--
+				continue
+			}
+
+			if abs(curr.PrevOnLevel[level].Val - target) < abs(curr.Val - target) { 
+				curr = curr.PrevOnLevel[level]
+			} else {
 				level--
 			}
-			
-			curr = curr.PrevOnLevel[level]
 		} else if curr.Val < target {
 			start = curr
 			
@@ -100,8 +120,12 @@ func (sl *SkipList) search(target int) (*Node, error) {
 				level--
 				continue
 			}
-
-			curr = curr.NextOnLevel[level]
+			
+			if abs(curr.NextOnLevel[level].Val - target) < abs(curr.Val - target) { 
+				curr = curr.NextOnLevel[level]
+			} else {
+				level--
+			}
 		} else {
 			return curr, nil
 		}
@@ -110,9 +134,81 @@ func (sl *SkipList) search(target int) (*Node, error) {
 	return nil, errors.New("not found")
 }
 
-// func (sl *SkipList) insert(value int) (bool, error) {
+func insertDoublyLinkedList(node *Node, nodeToInsert *Node, level int) {
+	// Let's say we have 1 <-> 3, and node to insert is 2
+	// 1) 2 -> 1.Next
+	// 2) 1.Next.Prev -> 2
+	// 3) 1.Next -> 2
+	// 4) 2.Prev = 1
+	nodeToInsert.NextOnLevel[level] = node.NextOnLevel[level]
+	
+	if node.NextOnLevel[level] != nil {
+		node.NextOnLevel[level].PrevOnLevel[level] = nodeToInsert
+	}
+	
+	node.NextOnLevel[level] = nodeToInsert
+	nodeToInsert.PrevOnLevel[level] = node
+}
 
-// }
+func (sl *SkipList) insert(value int) (bool, error) {
+	insertByLevel := map[int]*Node{}
+
+	level := sl.MaxLevel - 1
+	curr := sl.Sentinel.NextOnLevel[level]
+
+	start := sl.Sentinel.NextOnLevel[0]
+	var end *Node
+
+	for curr == nil && level >= 0{
+		curr = sl.Sentinel.NextOnLevel[level]
+		level--
+	}
+
+	for start != end && level >= 0 {
+		log.Printf("Level: %d, Value: %d\n", level, curr.Val)
+		if curr.Val > value {
+			end = curr
+			
+			if curr.PrevOnLevel[level] == sl.Sentinel {
+				insertByLevel[level] = sl.Sentinel
+				level--
+				continue
+			}
+
+			if abs(curr.PrevOnLevel[level].Val - value) < abs(curr.Val - value) { 
+				curr = curr.PrevOnLevel[level]
+			} else {
+				insertByLevel[level] = curr.PrevOnLevel[level]
+				level--
+			}
+		} else if curr.Val <= value {
+			start = curr
+			
+			if curr.NextOnLevel[level] == nil || curr.NextOnLevel[level] == end {
+				insertByLevel[level] = curr
+				level--
+				continue
+			}
+			
+			if abs(curr.NextOnLevel[level].Val - value) < abs(curr.Val - value) { 
+				curr = curr.NextOnLevel[level]
+			} else {
+				insertByLevel[level] = curr
+				level--
+			}
+		}
+	}
+	
+	nodeToInsert := &Node{Val: value, NextOnLevel: make(map[int]*Node), PrevOnLevel: make(map[int]*Node)}
+
+	for level := sl.MaxLevel - 1; level >= 0; level-- {
+		if insertByLevel[level] != nil && (level == 0 || rand.Float32() <= sl.P) {
+			insertDoublyLinkedList(insertByLevel[level], nodeToInsert, level)
+		}
+	}
+
+	return true, nil
+}
 
 // func (sl *SkipList) delete(value int) (bool, error) {
 
@@ -122,7 +218,14 @@ func main() {
 	nums := []int{1, 3, 4, 5, 6, 7, 8, 10}
 	var p float32 = 0.5
 	maxLevel := 4
-
+	
+	// rand.Seed(5)
+	
 	skipList := makeSkipList(nums, p, maxLevel)
-	fmt.Println(skipList.search(0))
+	skipList.print()
+	
+	skipList.insert(13)
+	skipList.print()
+
+	fmt.Println(skipList.search(13))
 }
