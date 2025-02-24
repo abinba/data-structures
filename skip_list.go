@@ -1,5 +1,6 @@
 // Project for concurrent skip list
-// - [ ] Make a basic skip list
+// - [ X ] Make a basic skip list
+// - [ ] Corrections
 // - [ ] Add concurrency
 // - [ ] Benchmark concurrent vs non-concurrent skip list
 
@@ -7,7 +8,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"math/rand"
 	"strconv"
@@ -103,7 +103,7 @@ func (sl *SkipList) search(target int) (*Node, error) {
 		if curr.Val > target {
 			end = curr
 			
-			if curr.PrevOnLevel[level] == sl.Sentinel {
+			if curr.PrevOnLevel[level] == nil || curr.PrevOnLevel[level] == sl.Sentinel {
 				level--
 				continue
 			}
@@ -134,7 +134,7 @@ func (sl *SkipList) search(target int) (*Node, error) {
 	return nil, errors.New("not found")
 }
 
-func insertDoublyLinkedList(node *Node, nodeToInsert *Node, level int) {
+func insertNode(node *Node, nodeToInsert *Node, level int) {
 	// Let's say we have 1 <-> 3, and node to insert is 2
 	// 1) 2 -> 1.Next
 	// 2) 1.Next.Prev -> 2
@@ -148,6 +148,17 @@ func insertDoublyLinkedList(node *Node, nodeToInsert *Node, level int) {
 	
 	node.NextOnLevel[level] = nodeToInsert
 	nodeToInsert.PrevOnLevel[level] = node
+}
+
+
+func deleteNode(nodeToDelete *Node, level int) {
+	if nodeToDelete.NextOnLevel[level] != nil {
+		nodeToDelete.NextOnLevel[level].PrevOnLevel[level] = nodeToDelete.PrevOnLevel[level]
+	}
+	
+	if nodeToDelete.PrevOnLevel[level] != nil {
+		nodeToDelete.PrevOnLevel[level].NextOnLevel[level] = nodeToDelete.NextOnLevel[level]
+	}
 }
 
 func (sl *SkipList) insert(value int) (bool, error) {
@@ -169,7 +180,7 @@ func (sl *SkipList) insert(value int) (bool, error) {
 		if curr.Val > value {
 			end = curr
 			
-			if curr.PrevOnLevel[level] == sl.Sentinel {
+			if curr.PrevOnLevel[level] == nil || curr.PrevOnLevel[level] == sl.Sentinel {
 				insertByLevel[level] = sl.Sentinel
 				level--
 				continue
@@ -203,16 +214,77 @@ func (sl *SkipList) insert(value int) (bool, error) {
 
 	for level := sl.MaxLevel - 1; level >= 0; level-- {
 		if insertByLevel[level] != nil && (level == 0 || rand.Float32() <= sl.P) {
-			insertDoublyLinkedList(insertByLevel[level], nodeToInsert, level)
+			insertNode(insertByLevel[level], nodeToInsert, level)
 		}
 	}
 
 	return true, nil
 }
 
-// func (sl *SkipList) delete(value int) (bool, error) {
+func (sl *SkipList) delete(value int) (bool, error) {
+	deleteByLevel := map[int]*Node{}
 
-// }
+	level := sl.MaxLevel - 1
+	curr := sl.Sentinel.NextOnLevel[level]
+
+	start := sl.Sentinel.NextOnLevel[0]
+	var end *Node
+
+	for curr == nil && level >= 0{
+		curr = sl.Sentinel.NextOnLevel[level]
+		level--
+	}
+
+	for start != end && level >= 0 {
+		log.Printf("Level: %d, Value: %d\n", level, curr.Val)
+		if curr.Val > value {
+			end = curr
+			
+			if curr.PrevOnLevel[level] == nil || curr.PrevOnLevel[level] == sl.Sentinel {
+				level--
+				continue
+			}
+
+			if abs(curr.PrevOnLevel[level].Val - value) < abs(curr.Val - value) { 
+				curr = curr.PrevOnLevel[level]
+			} else {
+				level--
+			}
+		} else if curr.Val <= value {
+			if curr.Val == value {
+				deleteByLevel[level] = curr
+			}
+
+			start = curr
+			
+			if curr.NextOnLevel[level] == nil || curr.NextOnLevel[level] == end {
+				level--
+				continue
+			}
+			
+			if abs(curr.NextOnLevel[level].Val - value) < abs(curr.Val - value) { 
+				curr = curr.NextOnLevel[level]
+			} else {
+				level--
+			}
+		}
+	}
+
+	deleted := false
+	for level := sl.MaxLevel - 1; level >= 0; level-- {
+		if deleteByLevel[level] != nil {
+			deleted = true
+			deleteNode(deleteByLevel[level], level)
+		}
+	}
+
+	var err error
+	if !deleted {
+		err = errors.New("not found")
+	}
+
+	return deleted, err
+}
 
 func main() {
 	nums := []int{1, 3, 4, 5, 6, 7, 8, 10}
@@ -220,12 +292,15 @@ func main() {
 	maxLevel := 4
 	
 	// rand.Seed(5)
-	
 	skipList := makeSkipList(nums, p, maxLevel)
-	skipList.print()
-	
-	skipList.insert(13)
-	skipList.print()
 
-	fmt.Println(skipList.search(13))
+	for i := 0; i < 10; i++ {
+		num := rand.Intn(20)
+		skipList.search(num)
+		skipList.insert(num)
+		skipList.search(num)
+		skipList.delete(rand.Intn(20))
+	}
+
+	skipList.print()
 }
