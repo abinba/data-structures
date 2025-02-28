@@ -1,6 +1,6 @@
 // Project for concurrent skip list
 // - [ X ] Make a basic skip list
-// - [ ] Corrections
+// - [ X ] Corrections
 // - [ ] Add concurrency
 // - [ ] Benchmark concurrent vs non-concurrent skip list
 
@@ -28,11 +28,16 @@ type SkipList struct {
 func logOnLevel(node *Node, level int) {
 	sentinel := node
 	log.Println("Level " + strconv.Itoa(level))
-	for node != nil && len(node.NextOnLevel) != 0 {
+	for node != nil {
 		if node != sentinel {
 			log.Printf("%d\n", node.Val)
 		}
-		node = node.NextOnLevel[level]
+		// Check if the node has a next node at this level before moving
+		if next, exists := node.NextOnLevel[level]; exists {
+			node = next
+		} else {
+			break
+		}
 	}
 }
 
@@ -45,10 +50,10 @@ func abs(n int) int {
 
 func makeSkipList(list []int, p float32, maxLevel int) *SkipList {
 	var curr *Node
-	dummy := &Node{Val: -10000, NextOnLevel: make(map[int]*Node)}
+	dummy := &Node{Val: -10000, NextOnLevel: make(map[int]*Node), PrevOnLevel: make(map[int]*Node)}
 	prev := dummy
 
-	// Construct a linked list first
+	// Construct a linked list at level 0 first
 	for _, num := range list {
 		curr = &Node{Val: num, NextOnLevel: map[int]*Node{}, PrevOnLevel: map[int]*Node{}}
 		curr.PrevOnLevel[0] = prev
@@ -56,19 +61,43 @@ func makeSkipList(list []int, p float32, maxLevel int) *SkipList {
 		prev = curr
 	}
 	
-	// Then, construct SkipList until maxLevel
-	for level := 1; level < maxLevel; level++ {
-		prev = dummy
-		curr = dummy.NextOnLevel[level - 1]
-
-		// Do we want to enforce setting some number on the level?
-		for curr != nil {
-			if rand.Float32() <= p {
-				prev.NextOnLevel[level] = curr
-				curr.PrevOnLevel[level] = prev
-				prev = curr
+	for _, num := range list {
+		// Find the node with this value
+		node := dummy.NextOnLevel[0]
+		for node != nil && node.Val != num {
+			node = node.NextOnLevel[0]
+		}
+		
+		if node == nil {
+			continue // Should never happen
+		}
+		
+		// Consider promotion for this node
+		shouldPromote := true
+		for level := 1; level < maxLevel && shouldPromote; level++ {
+			shouldPromote = rand.Float32() <= p
+			
+			if shouldPromote {
+				// Find the proper insertion point
+				prev := dummy
+				for {
+					// Try to find a node at this level that comes before our node
+					next := prev.NextOnLevel[level]
+					
+					// If no next or next is past our node in the list
+					if next == nil || next.Val > node.Val {
+						// Insert at this position
+						node.PrevOnLevel[level] = prev
+						node.NextOnLevel[level] = next
+						prev.NextOnLevel[level] = node
+						if next != nil {
+							next.PrevOnLevel[level] = node
+						}
+						break
+					}
+					prev = next
+				}
 			}
-			curr = curr.NextOnLevel[level - 1]
 		}
 	}
 
@@ -212,8 +241,19 @@ func (sl *SkipList) insert(value int) (bool, error) {
 	
 	nodeToInsert := &Node{Val: value, NextOnLevel: make(map[int]*Node), PrevOnLevel: make(map[int]*Node)}
 
-	for level := sl.MaxLevel - 1; level >= 0; level-- {
-		if insertByLevel[level] != nil && (level == 0 || rand.Float32() <= sl.P) {
+	if insertByLevel[0] != nil {
+		insertNode(insertByLevel[0], nodeToInsert, 0)
+	}
+	
+	shouldPromote := true
+	for level := 1; level < sl.MaxLevel; level++ {
+		if !shouldPromote {
+			break
+		}
+		
+		shouldPromote = rand.Float32() <= sl.P
+		
+		if shouldPromote && insertByLevel[level] != nil {
 			insertNode(insertByLevel[level], nodeToInsert, level)
 		}
 	}
@@ -291,16 +331,46 @@ func main() {
 	var p float32 = 0.5
 	maxLevel := 4
 	
-	// rand.Seed(5)
+	// Set a fixed seed for reproducible results
+	rand.Seed(42)
 	skipList := makeSkipList(nums, p, maxLevel)
+	
+	log.Println("=== Initial skip list ===")
+	skipList.print()
 
-	for i := 0; i < 10; i++ {
+	log.Println("=== Testing operations ===")
+	for i := 0; i < 5; i++ {
 		num := rand.Intn(20)
-		skipList.search(num)
+		log.Printf("Searching for %d", num)
+		node, err := skipList.search(num)
+		if err != nil {
+			log.Printf("Not found: %d", num)
+		} else {
+			log.Printf("Found: %d", node.Val)
+		}
+		
+		log.Printf("Inserting %d", num)
 		skipList.insert(num)
-		skipList.search(num)
-		skipList.delete(rand.Intn(20))
+		
+		log.Printf("Searching for %d after insertion", num)
+		node, err = skipList.search(num)
+		if err != nil {
+			log.Printf("ERROR: Not found after insertion: %d", num)
+		} else {
+			log.Printf("Found after insertion: %d", node.Val)
+		}
+		
+		// Delete a specific value instead of random
+		deleteVal := i * 2
+		log.Printf("Deleting %d", deleteVal)
+		deleted, _ := skipList.delete(deleteVal)
+		if deleted {
+			log.Printf("Deleted: %d", deleteVal)
+		} else {
+			log.Printf("Not found for deletion: %d", deleteVal)
+		}
 	}
 
+	log.Println("=== Final skip list ===")
 	skipList.print()
 }
